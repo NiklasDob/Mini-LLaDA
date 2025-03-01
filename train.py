@@ -110,13 +110,13 @@ def generate(model, prompt, steps=50, gen_length=128, block_length=128, temperat
         b,l, e = p.shape
         x0 = torch.multinomial(p.view(-1, e), num_samples=1).view(b, l)
       
-        # b,l = x0.shape
-        # # Add some new noise to the generated tokens, depending on the timestep
-        # p_mask = (1 - eps) * (ts / 999) + eps
-        # p_mask = p_mask[:, None].repeat(1, l)
-        # masked_indices = torch.rand((b, l), device=x.device) < p_mask
-        # random_tokens = torch.randint(0, 50257, (b, l), device=x.device)
-        # x0 = torch.where(masked_indices, random_tokens, x0)
+        b,l = x0.shape
+        # Add some new noise to the generated tokens, depending on the timestep
+        p_mask = (1 - eps) * (ts / 999) + eps
+        p_mask = p_mask[:, None].repeat(1, l)
+        masked_indices = torch.rand((b, l), device=x.device) < p_mask
+        random_tokens = torch.randint(0, 50257, (b, l), device=x.device)
+        x0 = torch.where(masked_indices, random_tokens, x0)
 
         x[:, prompt.shape[1]:] = x0
 
@@ -151,7 +151,7 @@ if __name__ == '__main__':
     X, Y, T = get_batch('train', BATCH_SIZE, BLOCK_SIZE, device)
     tokenizer = tiktoken.get_encoding("gpt2")
     for step in tqdm(range(NUM_STEPS), desc='Training steps', total=NUM_STEPS):
-
+        model.train()
         with ctx:
             logits = model(X, T, targets=Y)
             loss = model.last_loss
@@ -166,11 +166,12 @@ if __name__ == '__main__':
             print(f"step {step} loss {loss.item():.3f}")
         
         if step % 1000 == 0:
+            model.eval()
             with torch.no_grad():
                 all_losses = 0
                 for val_step in tqdm(range(VAL_STEPS),desc='Validation steps',total=VAL_STEPS):
                     X_val, Y_val, T_val = get_batch('val', BATCH_SIZE, BLOCK_SIZE, device)
-                    logits = model(X, T, targets=Y)
+                    logits = model(X_val, T_val, targets=Y_val)
                     loss = model.last_loss
                     all_losses += loss.item()
                 all_losses /= VAL_STEPS
@@ -186,6 +187,6 @@ if __name__ == '__main__':
             res = tokenizer.decode_batch(output.cpu().tolist())
             print("Generated text:" )
             print(res[0])
-            print("Mean validation loss", all_losses)
+            print(f"Mean validation loss: {all_losses:.3f}")
 
     
