@@ -1,4 +1,5 @@
 from contextlib import nullcontext
+import mmap
 import tiktoken
 from tqdm import tqdm
 from model import Transformer, ModelArgs
@@ -18,13 +19,29 @@ def noise_input(x, eps=1e-3):
     noisy_batch = torch.where(masked_indices, random_tokens, x)
     return noisy_batch, t#, masked_indices, p_mask
 
+_memmap_cache = {}
+
+def load_memmap(split):
+    """Load a persistent np.memmap and cache it globally."""
+    global _memmap_cache
+    if split not in _memmap_cache:
+        file_path = os.path.join(data_dir, f"{split}.bin")
+        _memmap_cache[split] = np.memmap(file_path, dtype=np.uint16, mode='r')
+        try:
+            # Apply madvise optimization (Linux/MacOS)
+            _memmap_cache[split]._mmap.madvise(mmap.MADV_SEQUENTIAL)
+        except AttributeError:
+            pass  # Ignore if not supported on the OS
+    return _memmap_cache[split]
+
 def get_batch(split, batch_size, block_size, device):
     # We recreate np.memmap every batch to avoid a memory leak, as per
     # https://stackoverflow.com/questions/45132940/numpy-memmap-memory-usage-want-to-iterate-once/61472122#61472122
-    if split == 'train':
-        data = np.memmap(os.path.join(data_dir, 'train.bin'), dtype=np.uint16, mode='r')
-    else:
-        data = np.memmap(os.path.join(data_dir, 'val.bin'), dtype=np.uint16, mode='r')
+    # if split == 'train':
+    #     data = np.memmap(os.path.join(data_dir, 'train.bin'), dtype=np.uint16, mode='r')
+    # else:
+    #     data = np.memmap(os.path.join(data_dir, 'val.bin'), dtype=np.uint16, mode='r')
+    data = load_memmap(split)
     ix = torch.randint(len(data) - block_size, (batch_size,))
     y = torch.stack([torch.from_numpy((data[i:i+block_size]).astype(np.int64)) for i in ix])
     
@@ -96,6 +113,8 @@ def generate(model, prompt, steps=50, gen_length=128, block_length=128, temperat
     prompt_index = torch.zeros_like(x.float(), dtype=bool)
     prompt_index[:, :prompt.shape[1]] = True
 
+    # import tiktoken
+    # tokenizer = tiktoken.get_encoding("gpt2")
     for t in np.linspace(999, 0, steps).astype(int):
         ts = torch.ones(x.shape[0], device=x.device, dtype=torch.int64) * t
         logits = model(x,ts)
@@ -109,14 +128,18 @@ def generate(model, prompt, steps=50, gen_length=128, block_length=128, temperat
         # x0 = torch.multinomial(p, num_samples=1)
         b,l, e = p.shape
         x0 = torch.multinomial(p.view(-1, e), num_samples=1).view(b, l)
-      
-        b,l = x0.shape
-        # Add some new noise to the generated tokens, depending on the timestep
-        p_mask = (1 - eps) * (ts / 999) + eps
-        p_mask = p_mask[:, None].repeat(1, l)
-        masked_indices = torch.rand((b, l), device=x.device) < p_mask
-        random_tokens = torch.randint(0, 50257, (b, l), device=x.device)
-        x0 = torch.where(masked_indices, random_tokens, x0)
+        
+        # res = tokenizer.decode_batch(x0.cpu().tolist())
+        # print(f"Step {t} Text:" )
+        print(res[0])
+        if t != 0:
+            b,l = x0.shape
+            # Add some new noise to the generated tokens, depending on the timestep
+            p_mask = (1 - eps) * (ts / 999) + eps
+            p_mask = p_mask[:, None].repeat(1, l)
+            masked_indices = torch.rand((b, l), device=x.device) < p_mask
+            random_tokens = torch.randint(0, 50257, (b, l), device=x.device)
+            x0 = torch.where(masked_indices, random_tokens, x0)
 
         x[:, prompt.shape[1]:] = x0
 
@@ -124,28 +147,35 @@ def generate(model, prompt, steps=50, gen_length=128, block_length=128, temperat
 
 if __name__ == '__main__':
     cwd = os.path.dirname(__file__)
-    data_dir = os.path.join(cwd, 'data')
+    data_dir = os.path.join(cwd, 'data', "shakespeare")
     BLOCK_SIZE = 256
     BATCH_SIZE = 16
-    NUM_STEPS = 50_000
-    VAL_STEPS = 10
+    NUM_STEPS = 100_000
+    VAL_STEPS = 50
     device = 'cuda' if torch.cuda.is_available() else 'cpu' # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1' etc., or try 'mps' on macbooks
     dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16' # 'float32', 'bfloat16', or 'float16', the latter will auto implement a GradScaler
     ptdtype = torch.bfloat16 if dtype == 'bfloat16' else torch.float16
     args = ModelArgs(
-        dim=128,
+        dim=256,
         n_layers=8,
         n_heads=8,
         vocab_size=50257,
         multiple_of=256,
-        max_seq_len=2048
-    )  
+        max_seq_len=2048,
+        dropout=0.1
+    )
+    CHECKPOINT_NAME = f"enwik8_dim={args.dim}_heads={args.n_heads}_layers={args.n_layers}_dropout={args.dropout:.1f}"
+
     model = Transformer(args).to(device)
+    # checkpoint_dir = os.path.join(cwd, "checkpoints", "enwik8_dim=64_heads=8_layers=8_dropout=0.1")
+    # checkpoint_path = os.path.join(checkpoint_dir, "model_49000.pth")
+    # checkpoint = torch.load(checkpoint_path, map_location=device)
+    # model.load_state_dict(checkpoint["state_dict"])
     # Print number of model parameters
     print("Num parameters: ", sum(p.numel() for p in model.parameters()))
     model.compile()
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=6e-4, betas=(0.9, 0.95))
+    optimizer = torch.optim.AdamW(model.parameters(), lr=4e-4, betas=(0.9, 0.95), weight_decay=0.1)
     scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
     ctx = nullcontext() if device == 'cpu' else torch.amp.autocast(device_type=device, dtype=ptdtype)
     X, Y, T = get_batch('train', BATCH_SIZE, BLOCK_SIZE, device)
@@ -176,10 +206,10 @@ if __name__ == '__main__':
                     all_losses += loss.item()
                 all_losses /= VAL_STEPS
             # Save the model at checkpoints directory    
-            checkpoint_dir = os.path.join(cwd, "checkpoints")
+            checkpoint_dir = os.path.join(cwd, "checkpoints", CHECKPOINT_NAME)
             os.makedirs(checkpoint_dir, exist_ok=True)
             torch.save({"state_dict": model.state_dict(), "optimizer": optimizer.state_dict(), "model_args": args}, os.path.join(checkpoint_dir, f"model_{step}.pth"))
-            prompt = "All:\nWhat would "
+            prompt = "Albert Einstein is"
             
             tokenized_prompt = tokenizer.encode_ordinary(prompt)
             tokenized_prompt = torch.tensor(tokenized_prompt, dtype=torch.long).to(device)
