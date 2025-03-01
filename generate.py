@@ -31,7 +31,7 @@ def main():
     model = Transformer(args).to(device)
     tokenizer = tiktoken.get_encoding("gpt2")
     
-    checkpoint_path = "checkpoints/enwik8_dim=256_heads=8_layers=8_dropout=0.1/model_27000.pth"
+    checkpoint_path = "checkpoints/shakespeare_dim=256_heads=8_layers=8_dropout=0.1/model_12000.pth"
     if not os.path.exists(checkpoint_path):
         print("Checkpoint not found! Please train the model first.")
         return

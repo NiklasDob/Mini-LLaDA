@@ -213,14 +213,13 @@ class Transformer(nn.Module):
         self.vocab_size = params.vocab_size
         self.n_layers = params.n_layers
 
-        self.tok_embeddings = nn.Embedding(params.vocab_size, params.dim)
-        self.timestep_embed = nn.Embedding(params.number_of_timesteps, params.dim)
+        self.tok_embeddings = nn.Embedding(params.vocab_size + 1, params.dim)
         self.dropout = nn.Dropout(params.dropout)
         self.layers = torch.nn.ModuleList()
         for layer_id in range(params.n_layers):
             self.layers.append(TransformerBlock(layer_id, params))
         self.norm = RMSNorm(params.dim, eps=params.norm_eps)
-        self.output = nn.Linear(params.dim, params.vocab_size, bias=False)
+        self.output = nn.Linear(params.dim, params.vocab_size + 1, bias=False)
 
         # share the unembedding parameters with the embedding parameters
         self.tok_embeddings.weight = self.output.weight # https://paperswithcode.com/method/weight-tying
@@ -248,11 +247,9 @@ class Transformer(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, tokens: torch.Tensor, timesteps: torch.Tensor, targets: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(self, tokens: torch.Tensor, targets: Optional[torch.Tensor] = None) -> torch.Tensor:
         _bsz, seqlen = tokens.shape
         h = self.tok_embeddings(tokens)
-        h = h + self.timestep_embed(timesteps).unsqueeze(1)
-
         h = self.dropout(h)
         freqs_cos = self.freqs_cos[:seqlen]
         freqs_sin = self.freqs_sin[:seqlen]
@@ -260,13 +257,16 @@ class Transformer(nn.Module):
         for layer in self.layers:
             h = layer(h, freqs_cos, freqs_sin)
         h = self.norm(h)
+        logits = self.output(h)
 
         if targets is not None:
+            Y, masked_indices, p_mask = targets
             # if we are given some desired targets also calculate the loss
-            logits = self.output(h)
-            self.last_loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
+            # self.last_loss = F.cross_entropy(logits.view(-1, logits.size(-1)), Y.view(-1), ignore_index=-1)
+            token_loss = F.cross_entropy(logits[masked_indices], Y[masked_indices], reduction='none') / p_mask[masked_indices]
+            loss = token_loss.sum() / (Y.shape[0] * Y.shape[1])
+            self.last_loss = loss
         else:
-            logits = self.output(h) 
             self.last_loss = None
 
         return logits
