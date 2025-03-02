@@ -1,0 +1,7 @@
+numpy==1.23.5
+pytest==7.4.0
+Requests==2.31.0
+tiktoken==0.5.2
+torch==2.0.1
+tqdm==4.64.1
+matplotlib==3.9

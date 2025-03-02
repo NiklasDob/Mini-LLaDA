@@ -164,9 +164,16 @@ def generate(model, prompt, steps=128, gen_length=128, block_length=128, tempera
     x[x==mask_id] = 0
     return x
 
+import argparse
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="Train Tiny-LLaDiff on a specified dataset.")
+    parser.add_argument('--dataset', choices=['shakespeare', 'enwik8'], default='shakespeare', 
+                        help="Dataset to use for training. Options: 'shakespeare', 'enwik8'. Default: 'shakespeare'.")
+    
+    args = parser.parse_args()
+
     cwd = os.path.dirname(__file__)
-    dataset = "shakespeare"
+    dataset = args.dataset
     data_dir = os.path.join(cwd, 'data', dataset)
     BLOCK_SIZE = 256
     BATCH_SIZE = 16

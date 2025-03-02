@@ -7,7 +7,7 @@ import bz2
 # Define file paths
 dataset_url = "http://mattmahoney.net/dc/enwik8.zip"
 compressed_file_path = os.path.join(os.path.dirname(__file__), "enwik8.zip")
-uncompressed_file_path = os.path.join(os.path.dirname(__file__), "enwik8.txt")
+uncompressed_file_path = os.path.join(os.path.dirname(__file__), "enwik8")
 
 # Download the dataset if not exists
 if not os.path.exists(compressed_file_path):
