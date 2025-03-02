@@ -27,6 +27,7 @@ $ python generate.py
 ```
 
 ## 📂 Structure
+```
 Mini-LLaDA/
 │── data/                   # Datasets (tokenized text)                      
 ├── model.py                # Llama 2 model for the diffusion objective  
@@ -34,6 +35,6 @@ Mini-LLaDA/
 ├── train.py                # Train the model on a given dataset (shakespeare or enwik8)  
 │── README.md               # Project documentation  
 │── requirements.txt        # Dependencies  
-
+```
 ## License
 MIT
